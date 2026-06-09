@@ -16,6 +16,84 @@ class IpScannerViewModel(application: Application) : AndroidViewModel(applicatio
     private val repository = ScannerRepository(db.scannerDao())
 
     val engine = IpScannerEngine(application)
+    val countryEngine = IpScannerEngine(application)
+
+    data class CountryInfo(
+        val name: String,
+        val persianName: String,
+        val flag: String,
+        val cidrs: List<String>
+    )
+
+    val countriesList = listOf(
+        CountryInfo("Germany", "آلمان", "🇩🇪", listOf("142.250.186.0/24", "104.16.100.0/24", "172.64.150.0/24")),
+        CountryInfo("United States", "ایالات متحده", "🇺🇸", listOf("142.250.72.0/24", "104.16.12.0/24", "172.67.20.0/24")),
+        CountryInfo("United Kingdom", "انگلستان", "🇬🇧", listOf("185.199.108.0/24", "104.18.22.0/24", "172.64.120.0/24")),
+        CountryInfo("Netherlands", "هلند", "🇳🇱", listOf("140.82.112.0/24", "104.18.30.0/24", "172.64.140.0/24")),
+        CountryInfo("France", "فرانسه", "🇫🇷", listOf("104.24.120.0/24", "104.18.0.0/24", "172.64.110.0/24")),
+        CountryInfo("Finland", "فنلاند", "🇫🇮", listOf("104.28.10.0/24", "104.18.80.0/24", "172.64.160.0/24")),
+        CountryInfo("Canada", "کانادا", "🇨🇦", listOf("104.18.40.0/24", "104.16.90.0/24", "172.64.180.0/24")),
+        CountryInfo("Singapore", "سنگاپور", "🇸🇬", listOf("104.18.50.0/24", "104.16.130.0/24", "172.64.190.0/24")),
+        CountryInfo("Turkey", "ترکیه", "🇹🇷", listOf("104.18.60.0/24", "104.16.140.0/24", "172.64.130.0/24")),
+        CountryInfo("Iran", "ایران", "🇮🇷", listOf("104.18.0.0/24", "104.16.30.0/24"))
+    )
+
+    private val _selectedCountry = MutableStateFlow(countriesList[0])
+    val selectedCountry = _selectedCountry.asStateFlow()
+
+    fun selectCountry(country: CountryInfo) {
+        _selectedCountry.value = country
+    }
+
+    fun startCountryScan() {
+        val country = _selectedCountry.value
+        val cidrs = country.cidrs
+
+        viewModelScope.launch {
+            countryEngine.stopScan()
+            val ipsToScan = mutableListOf<String>()
+
+            withContext(Dispatchers.Default) {
+                for (cidr in cidrs) {
+                    if (cidr.isNotBlank()) {
+                        ipsToScan.addAll(IpUtils.parseCidr(cidr, maxCount = 60))
+                    }
+                }
+            }
+
+            if (ipsToScan.isEmpty()) {
+                countryEngine.addLog("رنج آی‌پی کشوری نامعتبر است!")
+                return@launch
+            }
+
+            countryEngine.startScan(
+                ipsToScan = ipsToScan,
+                port = 443,
+                providerName = "${country.flag} ${country.persianName}",
+                concurrencyLimit = concurrency.value,
+                timeoutMs = timeout.value
+            ) { completedResults ->
+                // Save clean results automatically
+                viewModelScope.launch {
+                    val entities = completedResults.map {
+                        ScannedIp(
+                            ip = it.ip,
+                            port = it.port,
+                            latencyMs = it.latencyMs,
+                            downloadSpeedKbps = 0.0,
+                            provider = "${country.flag} اسکن کشوری (${country.persianName})",
+                            connectionType = connectionDetails.value.first
+                        )
+                    }
+                    repository.insertIps(entities)
+                }
+            }
+        }
+    }
+
+    fun stopCountryScan() {
+        countryEngine.stopScan()
+    }
 
     // Flow states from database
     val allScannedIps = repository.allScannedIps.stateIn(
@@ -213,7 +291,18 @@ class IpScannerViewModel(application: Application) : AndroidViewModel(applicatio
         if (_isSpeedTesting.value != null) return
         _isSpeedTesting.value = scannedIp.ip
         viewModelScope.launch {
-            val speed = engine.runSpeedTest(scannedIp.ip)
+            val hostHeader = when (scannedIp.provider) {
+                "Cloudflare" -> "speed.cloudflare.com"
+                "Google" -> "www.google.com"
+                "GitHub" -> "github.com"
+                "Akamai" -> "www.apple.com"
+                else -> "speed.cloudflare.com"
+            }
+            val speed = engine.runSpeedTest(
+                ip = scannedIp.ip,
+                port = scannedIp.port,
+                hostHeader = hostHeader
+            )
             _speedResults.value = _speedResults.value + (scannedIp.ip to speed)
 
             val updated = scannedIp.copy(downloadSpeedKbps = speed)

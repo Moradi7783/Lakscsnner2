@@ -90,6 +90,15 @@ fun MainScreen(viewModel: IpScannerViewModel = viewModel()) {
     val totalCount by viewModel.engine.totalCount.collectAsStateWithLifecycle()
     val liveResults by viewModel.engine.liveResults.collectAsStateWithLifecycle()
     val logs by viewModel.engine.logs.collectAsStateWithLifecycle()
+
+    // Country scan states
+    val isCountryScanning by viewModel.countryEngine.isScanning.collectAsStateWithLifecycle()
+    val countryScanProgress by viewModel.countryEngine.scanProgress.collectAsStateWithLifecycle()
+    val countryScannedCount by viewModel.countryEngine.scannedCount.collectAsStateWithLifecycle()
+    val countryTotalCount by viewModel.countryEngine.totalCount.collectAsStateWithLifecycle()
+    val countryLiveResults by viewModel.countryEngine.liveResults.collectAsStateWithLifecycle()
+    val countryLogs by viewModel.countryEngine.logs.collectAsStateWithLifecycle()
+    val selectedCountry by viewModel.selectedCountry.collectAsStateWithLifecycle()
     
     val allScannedIps by viewModel.allScannedIps.collectAsStateWithLifecycle()
     val favoriteIps by viewModel.favoriteIps.collectAsStateWithLifecycle()
@@ -186,14 +195,14 @@ fun MainScreen(viewModel: IpScannerViewModel = viewModel()) {
                                 .size(8.dp)
                                 .drawBehind {
                                     drawCircle(
-                                        color = if (isScanning) Color(0xFF005AC1) else Color(0xFFEF4444),
+                                        color = if (isScanning || isCountryScanning) Color(0xFF005AC1) else Color(0xFFEF4444),
                                         radius = size.minDimension / 2 * pulseScale
                                     )
                                 }
                         )
                         Text(
-                            text = if (isScanning) "اسکن فعال" else "آماده اسکن",
-                            color = if (isScanning) Color(0xFF005AC1) else Color(0xFF44474E),
+                            text = if (isScanning || isCountryScanning) "اسکن فعال" else "آماده اسکن",
+                            color = if (isScanning || isCountryScanning) Color(0xFF005AC1) else Color(0xFF44474E),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -268,10 +277,24 @@ fun MainScreen(viewModel: IpScannerViewModel = viewModel()) {
                 }
             ) {
                 NavigationBarItem(
-                    selected = activeTab.intValue == 1,
-                    onClick = { activeTab.intValue = 1 },
+                    selected = activeTab.intValue == 2,
+                    onClick = { activeTab.intValue = 2 },
                     icon = { Icon(Icons.Default.Star, "برگزیده‌ها & خروجی") },
                     label = { Text("آی‌پی گزیده", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color(0xFF005AC1),
+                        selectedTextColor = Color(0xFF005AC1),
+                        unselectedIconColor = Color(0xFF44474E),
+                        unselectedTextColor = Color(0xFF44474E),
+                        indicatorColor = Color(0xFFD3E4FF)
+                    )
+                )
+
+                NavigationBarItem(
+                    selected = activeTab.intValue == 1,
+                    onClick = { activeTab.intValue = 1 },
+                    icon = { Icon(Icons.Default.Place, "اسکن متمایز کشورها") },
+                    label = { Text("اسکن کشوری", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Color(0xFF005AC1),
                         selectedTextColor = Color(0xFF005AC1),
@@ -320,7 +343,22 @@ fun MainScreen(viewModel: IpScannerViewModel = viewModel()) {
                     isSpeedTesting = isSpeedTesting,
                     context = context
                 )
-                1 -> SavedResultsViewTab(
+                1 -> CountryScannerViewTab(
+                    viewModel = viewModel,
+                    isScanning = isCountryScanning,
+                    scanProgress = countryScanProgress,
+                    scannedCount = countryScannedCount,
+                    totalCount = countryTotalCount,
+                    liveResults = countryLiveResults,
+                    logs = countryLogs,
+                    selectedCountry = selectedCountry,
+                    concurrency = concurrency,
+                    timeout = timeout,
+                    speedResults = speedResults,
+                    isSpeedTesting = isSpeedTesting,
+                    context = context
+                )
+                2 -> SavedResultsViewTab(
                     viewModel = viewModel,
                     allSavedIps = allScannedIps,
                     favoriteIps = favoriteIps,
@@ -1524,6 +1562,487 @@ fun IpResultItemCard(
                         color = Color(0xFF44474E),
                         fontSize = 11.sp
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CountryScannerViewTab(
+    viewModel: IpScannerViewModel,
+    isScanning: Boolean,
+    scanProgress: Float,
+    scannedCount: Int,
+    totalCount: Int,
+    liveResults: List<com.example.scanner.ScanResult>,
+    logs: List<String>,
+    selectedCountry: IpScannerViewModel.CountryInfo,
+    concurrency: Int,
+    timeout: Int,
+    speedResults: Map<String, Double>,
+    isSpeedTesting: String?,
+    context: Context
+) {
+    val scrollState = rememberScrollState()
+    
+    // Group scanned country results: Fast (<100ms), Medium (100-200ms), Slow (>200ms)
+    val fastIps = liveResults.filter { it.latencyMs in 0..100 }
+    val mediumIps = liveResults.filter { it.latencyMs in 101..200 }
+    val slowIps = liveResults.filter { it.latencyMs > 200 }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Explanatory card
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE1E2EC)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "اسکنر تفکیک‌شده کشورها 🌍",
+                    color = Color(0xFF005AC1),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Right
+                )
+                Text(
+                    text = "کشور هدف خود را انتخاب کنید تا قوی‌ترین رنج‌های ارتباطی آن اسکن شده، سپس نتایج سالم به صورت هوشمند بر اساس پینگ دسته‌بندی شوند.",
+                    color = Color(0xFF44474E),
+                    fontSize = 11.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Right
+                )
+            }
+        }
+
+        // Country Selection horizontal Row
+        Text(
+            text = "انتخاب کشور مقصد:",
+            color = Color(0xFF1B1B1F),
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Right
+        )
+        
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            viewModel.countriesList.reversed().forEach { country ->
+                val isSelected = country.name == selectedCountry.name
+                val borderCol = if (isSelected) Color(0xFF005AC1) else Color(0xFFE1E2EC)
+                val bgCol = if (isSelected) Color(0xFFD3E4FF) else Color(0xFFF3F4F9)
+                
+                Card(
+                    modifier = Modifier
+                        .clickable { viewModel.selectCountry(country) }
+                        .width(100.dp)
+                        .height(72.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderCol),
+                    colors = CardDefaults.cardColors(containerColor = bgCol)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(text = country.flag, fontSize = 20.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = country.persianName,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) Color(0xFF005AC1) else Color(0xFF1B1B1F)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Scanner settings and launch
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE1E2EC)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "کشور فعال: ${selectedCountry.flag} ${selectedCountry.persianName}",
+                        color = Color(0xFF005AC1),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        text = "فرآیند اسکن قوی و متمرکز",
+                        color = Color(0xFF1B1B1F),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+
+                if (isScanning) {
+                    // Scanning active layout
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { scanProgress },
+                            color = Color(0xFF10B981),
+                            strokeWidth = 4.dp,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "در حال اسکن رنج‌های اختصاصی ${selectedCountry.persianName}...",
+                                color = Color(0xFF1B1B1F),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Right
+                            )
+                            LinearProgressIndicator(
+                                progress = { scanProgress },
+                                color = Color(0xFF10B981),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "$scannedCount / $totalCount",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF44474E)
+                                )
+                                Text(
+                                    text = "${(scanProgress * 100).toInt()}% کامل شده",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF44474E)
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { viewModel.stopCountryScan() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "توقف", tint = Color.White)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("توقف فرآیند اسکن کشوری", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 12.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.startCountryScan() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005AC1)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "شروع اسکن", tint = Color.White)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "شروع اسکن قوی کشور ${selectedCountry.persianName}",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Live Logs for Country Scan
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF3F4F9)),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, Color(0xFFE1E2EC)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(100.dp)
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    text = "گزارش زنده فعالیت اسکنر کشوری:",
+                    color = Color(0xFF44474E),
+                    fontSize = 10.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Right
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    if (logs.isEmpty()) {
+                        item {
+                            Text(
+                                text = "برای شروع رصد روی دکمه استارت بزنید.",
+                                color = Color(0xFF8E9099),
+                                fontSize = 10.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Right
+                            )
+                        }
+                    } else {
+                        items(logs) { logMsg ->
+                            Text(
+                                text = logMsg,
+                                color = if (logMsg.contains("🟢")) Color(0xFF10B981) else Color(0xFF1B1B1F),
+                                fontSize = 10.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 1.dp),
+                                textAlign = TextAlign.Right
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Results Categorization Display
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = {
+                    if (liveResults.isEmpty()) {
+                        Toast.makeText(context, "لیست نتایج خالی است", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val textToCopy = liveResults.joinToString(separator = "\n") { it.ip }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("CountryCleanIPs", textToCopy))
+                        Toast.makeText(context, "$textToCopy", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "کپی همگانی ${liveResults.size} آی‌پی کشور ${selectedCountry.persianName} انجام شد 🚀", Toast.LENGTH_LONG).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005AC1)),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.height(34.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Share, contentDescription = "کپی همگانی کشوری", tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("کپی همه (${liveResults.size})", fontSize = 10.sp, color = Color.White)
+            }
+            Text(
+                text = "دسته‌بندی نتایج سالم کشور ${selectedCountry.flag}:",
+                color = Color(0xFF1B1B1F),
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp
+            )
+        }
+
+        if (liveResults.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "هیچ نتیجه‌ای هنوز ثبت نشده است.",
+                    color = Color(0xFF8E9099),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            // Group 1: Fast IPs (<100ms)
+            if (fastIps.isNotEmpty()) {
+                CategorySection(
+                    title = "بسیار سریع 🟢 (پینگ عالی < 100ms)",
+                    ips = fastIps,
+                    speedResults = speedResults,
+                    isSpeedTesting = isSpeedTesting,
+                    onSpeedTest = { ip -> 
+                        viewModel.testIpSpeed(
+                            ScannedIp(
+                                ip = ip.ip,
+                                port = ip.port,
+                                latencyMs = ip.latencyMs,
+                                downloadSpeedKbps = 0.0,
+                                provider = ip.provider,
+                                connectionType = "زنده"
+                            )
+                        )
+                    },
+                    context = context
+                )
+            }
+
+            // Group 2: Medium IPs (100-200ms)
+            if (mediumIps.isNotEmpty()) {
+                CategorySection(
+                    title = "پایدار و عالی 🟡 (پینگ ۱۰۰ الی ۲۰۰ms)",
+                    ips = mediumIps,
+                    speedResults = speedResults,
+                    isSpeedTesting = isSpeedTesting,
+                    onSpeedTest = { ip -> 
+                        viewModel.testIpSpeed(
+                            ScannedIp(
+                                ip = ip.ip,
+                                port = ip.port,
+                                latencyMs = ip.latencyMs,
+                                downloadSpeedKbps = 0.0,
+                                provider = ip.provider,
+                                connectionType = "زنده"
+                            )
+                        )
+                    },
+                    context = context
+                )
+            }
+
+            // Group 3: Slow IPs (>200ms)
+            if (slowIps.isNotEmpty()) {
+                CategorySection(
+                    title = "معمولی 🔴 (پینگ > ۲۰۰ms)",
+                    ips = slowIps,
+                    speedResults = speedResults,
+                    isSpeedTesting = isSpeedTesting,
+                    onSpeedTest = { ip -> 
+                        viewModel.testIpSpeed(
+                            ScannedIp(
+                                ip = ip.ip,
+                                port = ip.port,
+                                latencyMs = ip.latencyMs,
+                                downloadSpeedKbps = 0.0,
+                                provider = ip.provider,
+                                connectionType = "زنده"
+                            )
+                        )
+                    },
+                    context = context
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CategorySection(
+    title: String,
+    ips: List<com.example.scanner.ScanResult>,
+    speedResults: Map<String, Double>,
+    isSpeedTesting: String?,
+    onSpeedTest: (com.example.scanner.ScanResult) -> Unit,
+    context: Context
+) {
+    var expanded by remember { mutableStateOf(true) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFDFBFF)),
+        border = BorderStroke(1.dp, Color(0xFFE1E2EC)),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .background(Color(0xFFF3F4F9))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            val textToCopy = ips.joinToString(separator = "\n") { it.ip }
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("CategoryIPs", textToCopy))
+                            Toast.makeText(context, "تمامی آی‌پی‌های این دسته‌بندی کپی شد 📋", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005AC1)),
+                        modifier = Modifier.height(26.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("کپی همه دسته (${ips.size})", fontSize = 8.sp, color = Color.White)
+                    }
+                    Text(
+                        text = if (expanded) "▲" else "▼",
+                        color = Color(0xFF44474E),
+                        fontSize = 11.sp
+                    )
+                }
+                Text(
+                    text = title,
+                    color = Color(0xFF1B1B1F),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+            }
+
+            if (expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ips.forEach { ipRes ->
+                        IpResultItemCard(
+                            scannedIp = ScannedIp(
+                                ip = ipRes.ip,
+                                port = ipRes.port,
+                                latencyMs = ipRes.latencyMs,
+                                downloadSpeedKbps = speedResults[ipRes.ip] ?: 0.0,
+                                provider = ipRes.provider,
+                                connectionType = "زنده"
+                            ),
+                            isTestingSpeed = isSpeedTesting == ipRes.ip,
+                            onSpeedTest = { onSpeedTest(ipRes) },
+                            onCopy = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("CleanIP", ipRes.ip))
+                                Toast.makeText(context, "کپی شد: ${ipRes.ip}", Toast.LENGTH_SHORT).show()
+                            },
+                            onDelete = {}
+                        )
+                    }
                 }
             }
         }

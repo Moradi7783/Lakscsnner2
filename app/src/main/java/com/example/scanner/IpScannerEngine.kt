@@ -180,7 +180,6 @@ class IpScannerEngine(private val context: Context) {
             var socket: Socket? = null
             var finalSocket: Socket? = null
             try {
-                val startTime = System.currentTimeMillis()
                 socket = java.net.Socket()
                 socket.connect(InetSocketAddress(ip, port), 3000)
 
@@ -189,7 +188,7 @@ class IpScannerEngine(private val context: Context) {
                 finalSocket = if (port == 443) {
                     val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
                     val ssl = factory.createSocket(socket, ip, port, true) as SSLSocket
-                    ssl.soTimeout = 4000
+                    ssl.soTimeout = 3000
                     try {
                         // Set manual SNI using Reflection or SSLParameters for older systems if necessary,
                         // or rely on default handshaking
@@ -202,31 +201,47 @@ class IpScannerEngine(private val context: Context) {
                     ssl.startHandshake()
                     ssl
                 } else {
-                    socket.soTimeout = 4000
+                    socket.soTimeout = 3000
                     socket
                 }
 
                 val writer = finalSocket.getOutputStream().bufferedWriter()
                 val reader = finalSocket.getInputStream()
 
-                // Request a 150KB chunk file test to measure speed accurately without downloading massive datasets
-                writer.write("GET /__down?bytes=150000 HTTP/1.1\r\n")
-                writer.write("Host: $hostHeader\r\n")
-                writer.write("User-Agent: Mozilla/5.0 LekScanner/2.0\r\n")
-                writer.write("Connection: close\r\n\r\n")
+                // Request a 150KB chunk file test to measure speed accurately without downloading massive datasets,
+                // or fall back to / (index) for other non-Cloudflare hosts
+                val path = if (hostHeader == "speed.cloudflare.com") "/__down?bytes=150000" else "/"
+                val request = "GET $path HTTP/1.1\r\n" +
+                        "Host: $hostHeader\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Connection: close\r\n\r\n"
+
+                val downloadStartTime = System.currentTimeMillis()
+                writer.write(request)
                 writer.flush()
 
-                val buffer = ByteArray(2048)
+                val buffer = ByteArray(4096)
                 var bytesRead: Int
                 var totalBytes = 0L
+                val maxDurationMs = 1500L // 1.5 seconds max download time window
 
-                // Read all bytes
-                while (reader.read(buffer).also { bytesRead = it } != -1) {
+                while (System.currentTimeMillis() - downloadStartTime < maxDurationMs) {
+                    bytesRead = try {
+                        reader.read(buffer)
+                    } catch (e: Exception) {
+                        break
+                    }
+                    if (bytesRead == -1) break
                     totalBytes += bytesRead
+                    // Stop early as 300KB is enough data to measure speed accurately
+                    if (totalBytes > 300_000) {
+                        break
+                    }
                 }
 
-                val duration = System.currentTimeMillis() - startTime
-                if (duration > 0 && totalBytes > 1000) {
+                val duration = System.currentTimeMillis() - downloadStartTime
+                if (duration >= 50 && totalBytes >= 2048) {
                     val speedKbps = (totalBytes * 8.0 / 1024.0) / (duration / 1000.0)
                     speedKbps // Kilobits per second
                 } else {
