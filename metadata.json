@@ -1,0 +1,6 @@
+{
+  "name": "لک اسکنر۲ (Lac Scanner 2)",
+  "description": "قوی‌ترین اسکنر آی‌پی و SNI هوشمند برای عبور از فیلترینگ شدید و تست سرعت و پینگ (Cloudflare, Google, GitHub, Akamai)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
